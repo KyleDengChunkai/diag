@@ -59,6 +59,7 @@
 #define DIAG_FEATURE_DCI_EXTENDED_HEADER			BIT(14)
 #define DIAG_FEATURE_DIAG_ID					BIT(15)
 #define DIAG_FEATURE_PKT_HEADER_UNTAG				BIT(16)
+#define DIAG_FEATURE_DIAG_ID_FEATURE_MASK			BIT(19)
 
 #define DIAG_CMD_SUBSYS_DISPATCH       75
 #define DIAG_CMD_SUBSYS_DISPATCH_V2	128
@@ -86,6 +87,7 @@ struct peripheral {
 	struct watch_flow *flow;
 
 	int diag_id;
+	uint8_t support_diagid_v2;
 
 	bool sockets;
 
