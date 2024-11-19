@@ -205,6 +205,27 @@ struct diag_cntl_cmd_dereg {
 } __packed;
 #define to_cmd_dereg(h) container_of(h, struct diag_cntl_cmd_dereg, hdr)
 
+#define DIAG_CNTL_CMD_DIAG_ID	33
+struct diag_cntl_cmd_diag_id {
+	struct diag_cntl_hdr hdr;
+	uint32_t version;
+	uint32_t diag_id;
+	char process_name[MAX_DIAGID_STR_LEN];
+} __packed;
+#define to_cmd_diagid(h) container_of(h, struct diag_cntl_cmd_diag_id, hdr)
+
+struct diag_cntl_cmd_diag_id_v2 {
+	struct diag_cntl_hdr hdr;
+	uint32_t version;
+	uint32_t diag_id;
+	uint32_t feature_len;
+	uint8_t *feature_mask;
+	char process_name[];
+} __packed;
+ #define to_cmd_diag_id_v2(h) container_of(h, struct diag_cntl_cmd_diag_id_v2, hdr)
+
+struct list_head diag_id_list = LIST_INIT(diag_id_list);
+
 static void diag_cntl_send_feature_mask(struct peripheral *peripheral, uint32_t mask);
 
 static int diag_cntl_register(struct peripheral *peripheral,
@@ -262,6 +283,8 @@ static int diag_cntl_feature_mask(struct peripheral *peripheral,
 	local_mask |= DIAG_FEATURE_APPS_HDLC_ENCODE;
 	if (peripheral->sockets)
 		local_mask |= DIAG_FEATURE_SOCKETS_ENABLED;
+	local_mask |= DIAG_FEATURE_DIAG_ID;
+	local_mask |= DIAG_FEATURE_DIAG_ID_FEATURE_MASK;
 
 	printf("[%s] mask:", peripheral->name);
 
@@ -287,6 +310,10 @@ static int diag_cntl_feature_mask(struct peripheral *peripheral,
 		printf(" SOCKETS");
 	if (mask & DIAG_FEATURE_DIAG_ID)
 		printf(" DIAG-ID");
+	if (mask & DIAG_FEATURE_DIAG_ID_FEATURE_MASK) {
+		printf(" DIAG-ID-FEATURE-MASK");
+		peripheral->support_diagid_v2 = true;
+	}
 
 	printf(" (0x%x)\n", mask);
 
@@ -556,6 +583,114 @@ void diag_cntl_set_buffering_mode(struct peripheral *perif, int mode)
 	}
 }
 
+struct list_head *diag_get_diagid_list_head(void)
+{
+	return &diag_id_list;
+}
+
+int diag_add_diag_id_to_list(uint8_t diag_id, const char *process_name, struct peripheral *perif)
+{
+	struct diag_id_tbl_t *new_diag_id = NULL;
+
+	if (!process_name || diag_id == 0)
+		return -EINVAL;
+
+	new_diag_id = malloc(sizeof(struct diag_id_tbl_t));
+	if (!new_diag_id)
+		return -ENOMEM;
+
+	new_diag_id->diag_id = diag_id;
+	memset(new_diag_id->process_name, '\0', sizeof(new_diag_id->process_name));
+	(void)strncpy(new_diag_id->process_name, process_name, sizeof(new_diag_id->process_name) -1);
+	list_add(&diag_id_list, &new_diag_id->node);
+
+	return 0;
+}
+
+int diag_get_diag_id(const char *name, uint32_t *diag_id)
+{
+	struct diag_id_tbl_t *diag_id_item = NULL;
+
+	if (!name || !diag_id)
+		return -EINVAL;
+
+	list_for_each_entry(diag_id_item, &diag_id_list, node) {
+		if (!strcmp(diag_id_item->process_name, name)) {
+			*diag_id = diag_id_item->diag_id;
+			return 1;
+		}
+	}
+
+	return 0;
+}
+
+int diag_check_duplicate_diag_id(uint32_t diag_id)
+{
+	struct diag_id_tbl_t *diag_id_item = NULL;
+
+	list_for_each_entry(diag_id_item, &diag_id_list, node) {
+		if (diag_id == diag_id_item->diag_id)
+			return 1;
+	}
+
+	return 0;
+}
+
+static int diag_cntl_process_diag_id(struct peripheral *peripheral, struct diag_cntl_hdr *hdr, size_t len)
+{
+	struct diag_cntl_cmd_diag_id_v2 *pkt_v2 = to_cmd_diag_id_v2(hdr);
+	struct diag_cntl_cmd_diag_id *pkt = to_cmd_diagid(hdr);
+	struct diag_cntl_cmd_diag_id rsp = {0};
+	uint32_t version = 0, local_diag_id = 0;
+	static uint32_t diag_id = DIAG_ID_APPS;
+	char *process_name = NULL;
+	int ret;
+
+	if (pkt == NULL || len == 0)
+		return -EINVAL;
+
+	version = pkt->version;
+	if (peripheral->support_diagid_v2 && version >= DIAG_ID_VERSION_2) {
+		if (len < (sizeof(struct diag_cntl_cmd_diag_id_v2 ) -
+			(MAX_DIAGID_STR_LEN - MIN_DIAGID_STR_LEN))) {
+			return -EINVAL;
+		}
+		process_name = (char *)&pkt_v2->feature_mask + pkt_v2->feature_len;
+	} else {
+		if (len < (sizeof(struct diag_cntl_cmd_diag_id) -
+			(MAX_DIAGID_STR_LEN - MIN_DIAGID_STR_LEN))) {
+			return -EINVAL;
+		}
+		process_name = (char*)&pkt->process_name;
+	}
+
+	ret = diag_get_diag_id(process_name, &local_diag_id);
+	if (!ret) {
+		if (version >= DIAG_ID_VERSION_3)
+			local_diag_id = pkt_v2->diag_id;
+		else
+			local_diag_id = ++diag_id;
+
+		if (diag_check_duplicate_diag_id(local_diag_id))
+			return -EINVAL;
+
+		if (diag_add_diag_id_to_list(local_diag_id, process_name, peripheral))
+			return -EINVAL;
+	}
+
+	diag_id = local_diag_id;
+	rsp.diag_id = diag_id;
+	rsp.hdr.cmd = DIAG_CNTL_CMD_DIAG_ID;
+	rsp.version = DIAG_ID_VERSION_1;
+	memset(rsp.process_name, '\0', sizeof(rsp.process_name));
+	(void)strncpy(rsp.process_name, process_name, sizeof(rsp.process_name) - 1);
+	rsp.hdr.len = sizeof(rsp.diag_id) + sizeof(rsp.version) + strlen(process_name) + 1;
+	len = rsp.hdr.len + sizeof(rsp.hdr);
+
+	queue_push(&peripheral->cntlq, &rsp, len);
+	return 0;
+}
+
 int diag_cntl_recv(struct peripheral *peripheral, const void *buf, size_t n)
 {
 	struct diag_cntl_hdr *hdr;
@@ -577,6 +712,9 @@ int diag_cntl_recv(struct peripheral *peripheral, const void *buf, size_t n)
 			break;
 		case DIAG_CNTL_CMD_FEATURE_MASK:
 			diag_cntl_feature_mask(peripheral, hdr, n);
+			break;
+		case DIAG_CNTL_CMD_DIAG_ID:
+			diag_cntl_process_diag_id(peripheral, hdr, n);
 			break;
 		case DIAG_CNTL_CMD_NUM_PRESETS:
 			break;
