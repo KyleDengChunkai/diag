@@ -35,6 +35,21 @@
 #include "peripheral.h"
 #include "masks.h"
 
+#define DIAG_CNTL_CMD_DIAG_ID			33
+#define MAX_DIAGID_STR_LEN			30
+#define MIN_DIAGID_STR_LEN			5
+
+#define DIAGID_VERSION_1	1
+#define DIAGID_VERSION_2	2
+#define DIAGID_VERSION_3	3
+#define DIAG_ID_APPS	1
+
+struct diag_id_tbl_t {
+	struct list_head node;
+	uint8_t diag_id;
+	char process_name[MAX_DIAGID_STR_LEN];
+};
+
 int diag_cntl_recv(struct peripheral *perif, const void *buf, size_t len);
 void diag_cntl_send_log_mask(struct peripheral *peripheral, uint32_t equip_id);
 void diag_cntl_send_msg_mask(struct peripheral *peripheral, struct diag_ssid_range_t *range);
@@ -45,5 +60,7 @@ void diag_cntl_send_masks(struct peripheral *peripheral);
 
 void diag_cntl_set_diag_mode(struct peripheral *perif, bool real_time);
 void diag_cntl_set_buffering_mode(struct peripheral *perif, int mode);
+
+struct list_head* diag_get_diagid_list_head(void);
 
 #endif
