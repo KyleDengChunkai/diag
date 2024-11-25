@@ -38,6 +38,7 @@
 #include "dm.h"
 #include "hdlc.h"
 #include "util.h"
+#include "diag_cntl.h"
 
 #define DIAG_CMD_KEEP_ALIVE_SUBSYS	50
 #define DIAG_CMD_KEEP_ALIVE_CMD		3
@@ -51,6 +52,30 @@
 #define MOBILE_SOFTWARE_REVISION	"OE"
 #define MOBILE_MODEL_STRING		"DB410C"
 #define MSM_REVISION_NUMBER		2
+
+#define DIAG_CMD_DIAG_SUBSYS        18
+#define DIAG_CMD_DIAG_GET_DIAG_ID	0x222
+
+#define DIAG_MAX_REQ_SIZE	(16 * 1024)
+#define DIAG_MAX_RSP_SIZE	(16 * 1024)
+
+struct diag_pkt_header_t {
+	uint8_t cmd_code;
+	uint8_t subsys_id;
+	uint16_t subsys_cmd_code;
+} __packed;
+
+struct diag_cmd_diag_id_query_req_t {
+	struct diag_pkt_header_t header;
+	uint8_t version;
+} __packed;
+
+struct diag_cmd_diag_id_query_rsp_t {
+	struct diag_pkt_header_t header;
+	uint8_t version;
+	uint8_t num_entries;
+	uint8_t payload[];
+} __packed;
 
 static int handle_diag_version(struct diag_client *client, const void *buf,
 			       size_t len)
@@ -117,6 +142,54 @@ static int handle_keep_alive(struct diag_client *client, const void *buf,
 	return dm_send(client, resp, sizeof(resp));
 }
 
+static int handle_diag_id(struct diag_client *client, const void *buf,
+				size_t len)
+{
+	struct diag_cmd_diag_id_query_req_t *req = NULL;
+	struct diag_cmd_diag_id_query_rsp_t *resp = NULL;
+	struct diag_id_tbl_t *diag_id_item = NULL;
+	struct list_head *diag_id_list_head = NULL;
+	uint8_t process_name_len = 0;
+	uint8_t *offset_resp;
+	size_t resp_len = 0;
+	int num_entries = 0;
+
+	if (!buf || len < sizeof(struct diag_cmd_diag_id_query_req_t))
+		return -EMSGSIZE;
+
+	req = (struct diag_cmd_diag_id_query_req_t *)buf;
+	resp = alloca(DIAG_MAX_RSP_SIZE);
+	if (!resp)
+		return -EMSGSIZE;
+
+	memset(resp, 0, sizeof(resp));
+	offset_resp = (uint8_t *) resp;
+	resp->header.cmd_code = req->header.cmd_code;
+	resp->header.subsys_id = req->header.subsys_id;
+	resp->header.subsys_cmd_code = req->header.subsys_cmd_code;
+	resp->version = req->version;
+	resp_len = offsetof(struct diag_cmd_diag_id_query_rsp_t, payload);
+
+	diag_id_list_head = diag_get_diagid_list_head();
+	list_for_each_entry(diag_id_item, diag_id_list_head, node) {
+		memcpy(offset_resp + resp_len, &diag_id_item->diag_id,
+			sizeof(diag_id_item->diag_id));
+		resp_len += sizeof(diag_id_item->diag_id);
+		process_name_len = strlen(diag_id_item->process_name) + 1;
+		memcpy(offset_resp + resp_len, &process_name_len,
+			sizeof(process_name_len));
+		resp_len += sizeof(process_name_len);
+		memcpy(offset_resp + resp_len, diag_id_item->process_name,
+			strlen(diag_id_item->process_name) + 1);
+		resp_len += strlen(diag_id_item->process_name) + 1;
+
+		num_entries++;
+	}
+	resp->num_entries = num_entries;
+
+	return dm_send(client, (unsigned char *)resp, resp_len);
+}
+
 void register_app_cmds(void)
 {
 	register_fallback_cmd(DIAG_CMD_DIAG_VERSION_ID, handle_diag_version);
@@ -124,4 +197,6 @@ void register_app_cmds(void)
 	register_fallback_cmd(DIAG_CMD_EXTENDED_BUILD_ID, handle_extended_build_id);
 	register_fallback_subsys_cmd(DIAG_CMD_KEEP_ALIVE_SUBSYS,
 				     DIAG_CMD_KEEP_ALIVE_CMD, handle_keep_alive);
+	register_fallback_subsys_cmd(DIAG_CMD_DIAG_SUBSYS,
+				     DIAG_CMD_DIAG_GET_DIAG_ID, handle_diag_id);
 }
