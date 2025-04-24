@@ -626,6 +626,41 @@ void process_diagid_feature_mask(uint32_t diag_id, const uint32_t feature_mask)
 	}
 }
 
+#define QUERY_FEATURE_MASK_DATA_TYPE 0x8000
+struct query_pd_feature_mask
+{
+	int data_type;
+	uint32_t diagid_mask_supported;
+	uint32_t diagid_mask_enabled;
+};
+int diag_cntl_query_featuremask(struct diag_client *dm, struct diag_query_hw_accel_mask_rsp_t *query_params)
+{
+
+	struct diag_global_info *diag_info = diag_get_global_info();
+	struct query_pd_feature_mask params = {0};
+	int f_index = -1;
+	if (!query_params || !diag_info)
+		return -EINVAL;
+
+	if (query_params->hw_accel_type >= DIAG_HW_ACCEL_TYPE_MAX ||
+		query_params->hw_accel_ver >= DIAG_HW_ACCEL_CMD_VER_MAX) {
+		return -EINVAL;
+	}
+
+	f_index = diag_map_hw_accel_to_type(query_params->hw_accel_type,
+				query_params->hw_accel_ver);
+	params.data_type = QUERY_FEATURE_MASK_DATA_TYPE;
+	if (f_index < 0) {
+		params.diagid_mask_supported = 0;
+		params.diagid_mask_enabled = 0;
+	} else {
+		params.diagid_mask_supported = diag_info->diagid_feature[f_index];
+		params.diagid_mask_enabled = diag_info->diagid_status[f_index];
+	}
+	dm_send(dm, &params, sizeof(params));
+	return 0;
+}
+
 struct list_head *diag_get_diag_ids_head(void)
 {
 	return &diag_ids;

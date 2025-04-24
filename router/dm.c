@@ -44,6 +44,8 @@
  * DOC: Diagnostic Monitor
  */
 
+#define DATA_TYPE_QUERY_FEATUREMASK	42
+
 struct diag_client {
 	const char *name;
 	int fd;
@@ -128,6 +130,11 @@ static int dm_recv_raw(struct diag_client *dm)
 	int saved_errno;
 	unsigned char buf[4096];
 	ssize_t n;
+	struct dm_pkt{
+		int type;
+		unsigned char pkt;
+	};
+	struct dm_pkt *dmpkt;
 
 	for (;;) {
 		n = read(dm->in_fd, buf, sizeof(buf));
@@ -140,6 +147,15 @@ static int dm_recv_raw(struct diag_client *dm)
 			saved_errno = -errno;
 			warn("Failed to read from %s\n", dm->name);
 			return saved_errno;
+		}
+
+		dmpkt = (struct dm_pkt *)buf;
+		switch (dmpkt->type) {
+			case DATA_TYPE_QUERY_FEATUREMASK:
+				diag_cntl_query_featuremask(dm, buf + 4);
+				break;
+			default:
+				break;
 		}
 
 		diag_client_handle_command(dm, buf, n);

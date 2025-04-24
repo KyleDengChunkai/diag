@@ -56,6 +56,13 @@ struct diag_id_tbl_t {
 	struct diag_id_info diagid_info;
 };
 
+struct diag_query_hw_accel_mask_rsp_t {
+	uint8_t hw_accel_type;
+	uint8_t hw_accel_ver;
+	uint32_t diagid_mask_supported;
+	uint32_t diagid_mask_enabled;
+};
+
 int diag_cntl_recv(struct peripheral *perif, const void *buf, size_t len);
 void diag_cntl_send_log_mask(struct peripheral *peripheral, uint32_t equip_id);
 void diag_cntl_send_msg_mask(struct peripheral *peripheral, struct diag_ssid_range_t *range);
@@ -68,5 +75,7 @@ void diag_cntl_set_diag_mode(struct peripheral *perif, bool real_time);
 void diag_cntl_set_buffering_mode(struct peripheral *perif, int mode);
 
 struct list_head *diag_get_diag_ids_head(void);
+
+int diag_cntl_query_featuremask(struct diag_client *dm, struct diag_query_hw_accel_mask_rsp_t *query_params);
 
 #endif
