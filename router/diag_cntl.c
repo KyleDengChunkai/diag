@@ -42,6 +42,7 @@
 #include "masks.h"
 #include "peripheral.h"
 #include "util.h"
+#include "list.h"
 
 #define DIAG_CTRL_MSG_DTR               2
 #define DIAG_CTRL_MSG_DIAGMODE          3
@@ -67,6 +68,12 @@
 #define DIAG_CTRL_MSG_DCI_HANDSHAKE_PKT         29
 #define DIAG_CTRL_MSG_PD_STATUS                 30
 #define DIAG_CTRL_MSG_TIME_SYNC_PKT             31
+#define DIAG_CTRL_MSG_PASS_THRU                 35
+
+#define DIAG_HW_ACCEL_CMD		0x224
+#define DIAG_HW_ACCEL_OP_DISABLE	0
+#define DIAG_HW_ACCEL_OP_ENABLE		1
+#define DIAG_HW_ACCEL_OP_QUERY		2
 
 struct diag_cntl_hdr {
 	uint32_t cmd;
@@ -223,6 +230,15 @@ struct diag_cntl_cmd_diag_id_v2 {
 	char process_name[];
 } __packed;
  #define to_cmd_diag_id_v2(h) container_of(h, struct diag_cntl_cmd_diag_id_v2, hdr)
+
+ struct diag_cntl_cmd_passthru {
+	struct diag_cntl_hdr hdr;
+	uint32_t version;
+	uint32_t diagid_mask;
+	uint8_t hw_accel_type;
+	uint8_t hw_accel_ver;
+	uint8_t control_data;
+} __packed;
 
 struct list_head diag_ids = LIST_INIT(diag_ids);
 
@@ -601,6 +617,113 @@ void diag_map_feature_to_hw_accel(uint8_t index, uint8_t *hw_accel_type, uint8_t
 	}
 }
 
+int diag_map_hw_accel_to_type(uint8_t hw_accel_type, uint8_t hw_accel_ver)
+{
+	int index = -EINVAL;
+
+	if (hw_accel_ver == DIAG_HW_ACCEL_CMD_VER_1) {
+		switch (hw_accel_type) {
+		case DIAG_HW_ACCEL_TYPE_STM:
+			index = DIAG_HW_ACCEL_TYPE_STM;
+			break;
+		case DIAG_HW_ACCEL_TYPE_ATB:
+			index = DIAG_HW_ACCEL_TYPE_ATB;
+			break;
+		default:
+			index = -EINVAL;
+			break;
+		}
+	}
+
+	return index;
+}
+
+int diag_cntl_send_passthru_control_pkt(struct diag_hw_accel_cmd_req_t *req_params)
+{
+	struct diag_cntl_cmd_passthru pkt = {0};
+	int f_index = -1, err = 0;
+	uint32_t diagid_mask = 0, diagid_status = 0;
+	uint8_t i, hw_accel_type, hw_accel_ver;
+	struct peripheral *peripheral;
+	struct diag_global_info *diag_info = NULL;
+
+	if (!req_params || req_params->operation > DIAG_HW_ACCEL_OP_QUERY) {
+		return -EINVAL;
+	}
+
+	hw_accel_type = req_params->op_req.hw_accel_type;
+	hw_accel_ver = req_params->op_req.hw_accel_ver;
+	if (hw_accel_type >= DIAG_HW_ACCEL_TYPE_MAX || hw_accel_type < 0 ||
+		hw_accel_ver != DIAG_HW_ACCEL_CMD_VER_1) {
+		return -EINVAL;
+	}
+
+	diag_info = diag_get_global_info();
+	f_index = diag_map_hw_accel_to_type(hw_accel_type, hw_accel_ver);
+	if (f_index < 0)
+		return -EINVAL;
+
+	diagid_mask = req_params->op_req.diagid_mask;
+	diagid_status = diag_info->diagid_feature[f_index] & diagid_mask;
+
+	if (req_params->operation == DIAG_HW_ACCEL_OP_DISABLE) {
+		diag_info->diagid_status[f_index] &= ~diagid_status;
+	} else {
+		diag_info->diagid_feature[f_index] |= diagid_status;
+		for (i = 0; i < DIAGID_FEATURE_COUNT; i++) {
+			if (i == f_index || !diag_info->diag_hw_accel[i])
+				continue;
+			diag_info->diagid_status[i] &= ~(diag_info->diagid_feature[i] & diagid_mask);
+		}
+	}
+
+	req_params->op_req.diagid_mask = diag_info->diagid_status[f_index];
+	pkt.hdr.cmd = DIAG_CTRL_MSG_PASS_THRU;
+	pkt.hdr.len = sizeof(pkt)- sizeof(pkt.hdr);
+	pkt.version = 1;
+	pkt.diagid_mask = diagid_mask;
+	pkt.hw_accel_type = hw_accel_type;
+	pkt.hw_accel_ver = hw_accel_ver;
+	pkt.control_data = req_params->operation;
+
+	list_for_each_entry(peripheral, &peripherals, node) {
+		if (peripheral->features & DIAG_FEATURE_DIAG_ID_FEATURE_MASK) {
+			queue_push(&peripheral->cntlq, &pkt, sizeof(pkt));
+		}
+	}
+
+	return 0;
+}
+
+void diag_send_hw_accel_status(struct peripheral *peripheral)
+{
+	struct diag_hw_accel_cmd_req_t req_params = {0};
+	struct diag_global_info *diag_info = NULL;
+	uint8_t hw_accel_type = 0, hw_accel_ver = 0;
+	int feature = 0;
+
+	diag_info = diag_get_global_info();
+	for (feature = 0; feature < DIAGID_FEATURE_COUNT; feature++) {
+		if (!diag_info->diag_hw_accel[feature])
+			continue;
+
+		if (diag_info->diagid_feature[feature] &
+			diag_info->diagid_status[feature]) {
+			diag_map_feature_to_hw_accel(feature, &hw_accel_type, &hw_accel_ver);
+			req_params.header.cmd_code = DIAG_CMD_SUBSYS_DISPATCH;
+			req_params.header.subsys_id = DIAG_CMD_DIAG_SUBSYS;
+			req_params.header.subsys_cmd_code = DIAG_HW_ACCEL_CMD;
+			req_params.version = 1;
+			req_params.reserved = 0;
+			req_params.operation = DIAG_HW_ACCEL_OP_ENABLE;
+			req_params.op_req.hw_accel_type = hw_accel_type;
+			req_params.op_req.hw_accel_ver = DIAG_HW_ACCEL_CMD_VER_1;
+			req_params.op_req.diagid_mask = diag_info->diagid_status[feature];
+			if (peripheral->features & DIAG_FEATURE_DIAG_ID_FEATURE_MASK)
+				diag_cntl_send_passthru_control_pkt(&req_params);
+		}
+	}
+}
 
 void process_diagid_feature_mask(uint32_t diag_id, const uint32_t feature_mask)
 {

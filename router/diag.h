@@ -63,6 +63,7 @@
 
 #define DIAG_CMD_SUBSYS_DISPATCH       75
 #define DIAG_CMD_SUBSYS_DISPATCH_V2	128
+#define DIAG_CMD_DIAG_SUBSYS	18
 
 enum {
 	DIAG_HW_ACCEL_TYPE_STM = 1,
@@ -84,6 +85,26 @@ struct diag_global_info {
 	uint32_t diagid_feature[DIAGID_FEATURE_COUNT];
 	uint32_t diagid_status[DIAGID_FEATURE_COUNT];
 	uint32_t diag_hw_accel[DIAGID_FEATURE_COUNT];
+};
+
+struct diag_pkt_header_t {
+	uint8_t cmd_code;
+	uint8_t subsys_id;
+	uint16_t subsys_cmd_code;
+};
+
+struct diag_hw_accel_op_t {
+	uint8_t hw_accel_type;
+	uint8_t hw_accel_ver;
+	uint32_t diagid_mask;
+};
+
+struct diag_hw_accel_cmd_req_t {
+	struct diag_pkt_header_t header;
+	uint8_t version;
+	uint8_t operation;
+	uint16_t reserved;
+	struct diag_hw_accel_op_t op_req;
 };
 
 struct diag_client;

@@ -45,6 +45,8 @@
  */
 
 #define DATA_TYPE_QUERY_FEATUREMASK	42
+#define DATA_TYPE_PASSTHRU_CONTROL 43
+#define PASSTHRU_MASKS_TYPE	0x00002000
 
 struct diag_client {
 	const char *name;
@@ -125,6 +127,25 @@ static int dm_recv_hdlc(struct diag_client *dm)
 	return ret;
 }
 
+void diag_send_passthru_control_pkt(struct diag_client *dm, struct diag_hw_accel_cmd_req_t *req_params)
+{
+	struct diag_hw_diagid_mask
+	{
+		int data_type;
+		int ret_val;
+		uint32_t diagid_mask;
+	};
+	struct diag_hw_diagid_mask params;
+	int ret;
+
+	ret = diag_cntl_send_passthru_control_pkt(req_params);
+	params.data_type = PASSTHRU_MASKS_TYPE;
+	params.ret_val = ret;
+	params.diagid_mask = req_params->op_req.diagid_mask;
+
+	dm_send(dm, &params, sizeof(params));
+}
+
 static int dm_recv_raw(struct diag_client *dm)
 {
 	int saved_errno;
@@ -151,6 +172,9 @@ static int dm_recv_raw(struct diag_client *dm)
 
 		dmpkt = (struct dm_pkt *)buf;
 		switch (dmpkt->type) {
+			case DATA_TYPE_PASSTHRU_CONTROL:
+				diag_send_passthru_control_pkt(dm, buf + 4);
+				break;
 			case DATA_TYPE_QUERY_FEATUREMASK:
 				diag_cntl_query_featuremask(dm, buf + 4);
 				break;
