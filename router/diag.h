@@ -64,6 +64,28 @@
 #define DIAG_CMD_SUBSYS_DISPATCH       75
 #define DIAG_CMD_SUBSYS_DISPATCH_V2	128
 
+enum {
+	DIAG_HW_ACCEL_TYPE_STM = 1,
+	DIAG_HW_ACCEL_TYPE_ATB,
+
+	DIAG_HW_ACCEL_TYPE_MAX
+} diag_hw_accel_type;
+
+enum {
+	DIAG_HW_ACCEL_CMD_VER_1 = 1,
+	DIAG_HW_ACCEL_CMD_VER_2,
+
+	DIAG_HW_ACCEL_CMD_VER_MAX
+} diag_hw_accel_cmd_ver;
+
+#define DIAGID_FEATURE_COUNT	3
+
+struct diag_global_info {
+	uint32_t diagid_feature[DIAGID_FEATURE_COUNT];
+	uint32_t diagid_status[DIAGID_FEATURE_COUNT];
+	uint32_t diag_hw_accel[DIAGID_FEATURE_COUNT];
+};
+
 struct diag_client;
 
 struct peripheral {
@@ -138,5 +160,7 @@ void register_common_cmd(unsigned int cmd, int(*cb)(struct diag_client *client,
 
 void register_app_cmds(void);
 void register_common_cmds(void);
+
+struct diag_global_info *diag_get_global_info(void);
 
 #endif
